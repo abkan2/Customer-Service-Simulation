@@ -11,9 +11,10 @@
 ![C#](https://img.shields.io/badge/C%23-239120?style=flat-square&logo=c-sharp&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)
 
-## � Gameplay Preview
+## 🎮 Gameplay Preview
 
-
+### Customer Service in Action
+*Demo video coming soon - currently being compressed for GitHub*
 
 ### Real-time Satisfaction Tracking  
 *Coming Soon: Demo of satisfaction meter responding to player choices*
