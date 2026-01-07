@@ -1,7 +1,7 @@
 # Custom## 🎮 Gameplay Preview
 
 ### Customer Service in Action
-![Customer Service Demo](docs/demos/DemoVideo.mov)
+![Customer Service Demo](https://youtu.be/eIdq0u6XlFg)
 
 ## ScreenShots
 ![Main Menu](docs/images/Main Menu SS.png)
@@ -10,19 +10,6 @@
 ![Unity](https://img.shields.io/badge/Unity-2022.3+-black?style=flat-square&logo=unity)
 ![C#](https://img.shields.io/badge/C%23-239120?style=flat-square&logo=c-sharp&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-blue?style=flat-square)
-
-## 🎮 Gameplay Preview
-
-### Customer Service in Action
-*Demo video coming soon - currently being compressed for GitHub*
-
-### Real-time Satisfaction Tracking  
-*Coming Soon: Demo of satisfaction meter responding to player choices*
-<!-- ![Satisfaction Demo](docs/demos/satisfaction-demo.gif) -->
-
-### Performance Report Card
-*Coming Soon: Screenshots of the comprehensive grading system*
-<!-- ![Report Card](docs/images/report-card.png) -->
 
 ## �🎯 Overview
 
