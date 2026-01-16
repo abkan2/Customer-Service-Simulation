@@ -42,8 +42,20 @@ public class ConvaiCustomerServiceIntegration : MonoBehaviour
 
     public GameObject welcomeCanvas;
 
+
+    private CustomerServiceMetrics Metrics =>
+    (rushSession != null && rushSession.customerServiceMetrics != null)
+        ? rushSession.customerServiceMetrics
+        : customerServiceMetrics;
+
     void Start()
     {
+        // Single source of truth: prefer RushSession metrics if available
+        if (rushSession != null && rushSession.customerServiceMetrics != null)
+        {
+            customerServiceMetrics = rushSession.customerServiceMetrics;
+        }
+
         // Validate NPC array
         if (customerNPCs == null || customerNPCs.Length == 0)
         {
@@ -110,7 +122,7 @@ public class ConvaiCustomerServiceIntegration : MonoBehaviour
     
     private IEnumerator StartCustomerInteractionCoroutine(int customerIndex)
     {
-        Debug.Log($"=== StartCustomerInteraction called with index: {customerIndex} ===");
+        Debug.Log($"=== [INTERACTION START] Customer {customerIndex} ===");
         
         // Validate customer index and NPC array
         if (customerNPCs == null || customerIndex >= customerNPCs.Length)
@@ -131,26 +143,25 @@ public class ConvaiCustomerServiceIntegration : MonoBehaviour
 
         Debug.Log($"Starting interaction with Customer {customerIndex + 1}/{customerNPCs.Length}: {currentCustomerNPC.characterName}");
 
-        // Ensure any previous NPC is properly terminated before starting new one
+        // MUST CLEAN UP PREVIOUS NPC FIRST
         yield return StartCoroutine(EnsureCleanNPCState());
 
         // Activate the current NPC and deactivate others
         ActivateCurrentNPC();
         
-        // Position the NPC at the correct location
+        // POSITION AND ACTIVATE
         PositionCurrentNPC();
-
-        // Subscribe to this NPC's audio transcript events
         SubscribeToCurrentNPCAudio();
 
-        // Wait a moment for the NPC to fully initialize
-        yield return new WaitForSeconds(1f);
+        // IMPORTANT: Wait for Convai's internal NPCManager to recognize the new active NPC
+        // before sending the first prompt. This prevents the "Cancelled" GRPC error.
+        yield return new WaitForSeconds(0.5f); 
 
         // Start metrics tracking for this customer interaction
-        if (customerServiceMetrics != null)
+        if (Metrics != null)
         {
             string complaintType = GetComplaintTypeFromNPC(currentCustomerNPC);
-            customerServiceMetrics.StartCustomerInteraction(complaintType);
+            Metrics.StartCustomerInteraction(complaintType);
             Debug.Log($"Started metrics tracking for customer interaction: {complaintType}");
         }
 
@@ -274,18 +285,24 @@ public class ConvaiCustomerServiceIntegration : MonoBehaviour
 
     private void ActivateCurrentNPC()
     {
-        // Deactivate all NPCs first
+        // 1. Deactivate ALL NPCs in the manager's eyes first
         foreach (var npc in customerNPCs)
         {
             if (npc != null)
             {
                 npc.isCharacterActive = false;
+                // If the NPC has a Group Controller, tell it to stop talking
+                if (npc.AudioManager != null) npc.AudioManager.StopAllAudioPlayback();
             }
         }
         
-        // Activate only the current customer NPC
+        // 2. Small yield for the ConvaiNPCManager to process the "No one is active" state
+        // (This happens automatically if you do this at the start of the Coroutine)
+        
+        // 3. Activate only the current customer NPC
         if (currentCustomerNPC != null)
         {
+            currentCustomerNPC.gameObject.SetActive(true);
             currentCustomerNPC.isCharacterActive = true;
             Debug.Log($"Activated {currentCustomerNPC.characterName}");
         }
@@ -464,9 +481,9 @@ public class ConvaiCustomerServiceIntegration : MonoBehaviour
                         Debug.Log($"🎯 [Conversation End] Player chose final response, completing customer");
                         
                         // Track player choice in metrics
-                        if (customerServiceMetrics != null)
+                        if (Metrics != null)
                         {
-                            customerServiceMetrics.OnPlayerChoice();
+                            Metrics.OnPlayerChoice();
                         }
                         
                         // Update satisfaction (conversation ending is always positive)
@@ -523,9 +540,9 @@ public class ConvaiCustomerServiceIntegration : MonoBehaviour
                     Debug.Log($"Player chose: {(wasGood ? "Good" : "Bad")} response");
                     
                     // Track player choice in metrics
-                    if (customerServiceMetrics != null)
+                    if (Metrics != null)
                     {
-                        customerServiceMetrics.OnPlayerChoice();
+                        Metrics.OnPlayerChoice();
                     }
                     
                     // Update satisfaction using existing system
@@ -534,21 +551,31 @@ public class ConvaiCustomerServiceIntegration : MonoBehaviour
                         rushSession.satisfactionSlider.UpdateSatisfaction(wasGood);
                     }
                     
-                                            // Send player response back to NPC for more realistic conversation
-                        string playerResponse = wasGood ? goodOption : badOption;
-                        if (currentCustomerNPC != null)
-                        {
-                            StartCoroutine(SendTextToNPCWithRateLimit(currentCustomerNPC, playerResponse, "Player Response"));
-                            Debug.Log($"Sent player response to NPC: {playerResponse}");
-                            
-                            // Wait a moment then prompt for another complaint
-                            StartCoroutine(PromptForNextComplaint());
-                        }
-                        else
-                        {
-                            // Notify rush session that interaction is complete if no NPC
-                            OnCustomerInteractionComplete();
-                        }
+                    // Construct the response string
+                    string playerResponse = wasGood ? goodOption : badOption;
+
+                    // COMBINED PROMPT: Append the transition question to the player's choice 
+                    // This creates a single API call instead of two, preventing GRPC race conditions.
+                    // We only do this if we aren't on the very last complaint exchange.
+                    if (complaintExchangeCount < maxComplaintExchanges - 1)
+                    {
+                        playerResponse += " What else is bothering you? Please tell me clearly.";
+                    
+                    }
+
+                    if (currentCustomerNPC != null)
+                    {
+                        // Send the bundled text as one single data packet
+                        StartCoroutine(SendTextToNPCWithRateLimit(currentCustomerNPC, playerResponse, "Combined Player Response"));
+                        
+                        // Simply wait for the NPC's natural reaction/next complaint
+                        StartCoroutine(PromptForNextComplaint());
+                    }
+                    else
+                    {
+                        // Notify rush session that interaction is complete if no NPC
+                        OnCustomerInteractionComplete();
+                    }
                 }
             );
         }
@@ -560,11 +587,10 @@ public class ConvaiCustomerServiceIntegration : MonoBehaviour
 
     private IEnumerator PromptForNextComplaint()
     {
-        // Wait for the NPC to finish processing the player's response
-        yield return new WaitForSeconds(3f);
-        
-        // Check if we've reached the maximum exchanges
+        // 1. Increment the exchange count for the turn just completed
         complaintExchangeCount++;
+        
+        // 2. Check if we've reached the maximum exchanges
         if (complaintExchangeCount >= maxComplaintExchanges)
         {
             Debug.Log($"Maximum complaint exchanges reached ({maxComplaintExchanges}). Moving to next customer.");
@@ -572,19 +598,15 @@ public class ConvaiCustomerServiceIntegration : MonoBehaviour
             yield break;
         }
         
-        // Prompt the NPC to give another complaint or continue the conversation
-        string nextPrompt = "Whats your next complaint or issue?";
-        if (currentCustomerNPC != null)
-        {
-            yield return StartCoroutine(SendTextToNPCWithRateLimit(currentCustomerNPC, nextPrompt, "Next Complaint Prompt"));
-            
-            // Reset the listening state to capture the next complaint
-            isWaitingForNPCResponse = true;
-            capturedComplaint = "";
-            
-            // Start waiting for the next response
-            StartCoroutine(WaitForNPCResponse());
-        }
+        Debug.Log($"🔄 [Exchange {complaintExchangeCount}] Listening for NPC's reaction to player...");
+
+        // 3. SECURE THE STATE: Reset these BEFORE starting the listener
+        isWaitingForNPCResponse = true;
+        capturedComplaint = "";
+        
+        // 4. Start waiting for the response triggered by the Player's last choice.
+        // We don't need to send "Whats your next issue" because the NPC already knows to continue.
+        yield return StartCoroutine(WaitForNPCResponse());
     }
 
     void Update()
@@ -654,20 +676,14 @@ public class ConvaiCustomerServiceIntegration : MonoBehaviour
     private IEnumerator DelayedNextCustomer()
     {
         // FIRST: End metrics tracking for current customer
-        if (customerServiceMetrics != null)
+        if (Metrics != null)
         {
-            customerServiceMetrics.EndCustomerInteraction();
+            Metrics.EndCustomerInteraction();
             Debug.Log("Ended metrics tracking for current customer interaction");
         }
 
-        // SECOND: Wait for current NPC to completely finish talking
-        if (currentCustomerNPC != null)
-        {
-            Debug.Log("Waiting for NPC to finish talking before transition...");
-            yield return new WaitUntil(() => currentCustomerNPC.IsCharacterTalking);
-            yield return new WaitUntil(() => !currentCustomerNPC.IsCharacterTalking);
-            Debug.Log("NPC finished talking, starting transition");
-        }
+        // ABRUPT CHANGE: Removed the WaitUntil NPC finishes talking here 
+        // to allow the screen to fade to black immediately.
 
         // Ensure transition screen is active but invisible
         if (transitionScreen != null)
@@ -774,60 +790,39 @@ public class ConvaiCustomerServiceIntegration : MonoBehaviour
     private IEnumerator SafelyTerminateNPC(ConvaiNPC npc)
     {
         if (npc == null) yield break;
-        if (currentCustomerIndex == 0)
-        {
-            Debug.Log("First interaction");
-            yield return null; // No need to terminate the first customer NPC, handled by RushSession
-        }
-        else
-        {
-                    Debug.Log($"Starting safe termination for {npc.characterName}");
+
+        Debug.Log($"🚨 [Abrupt Termination] Stopping {npc.characterName} immediately");
         
-        // STEP 1: Wait for any ongoing speech to complete
-        float maxWaitTime = 10f; // Maximum time to wait for NPC to finish talking
-        float elapsed = 0f;
-        
-        while (npc.IsCharacterTalking && elapsed < maxWaitTime)
+        isWaitingForNPCResponse = false;
+        capturedComplaint = "";
+
+        // NEW: Stop audio and reset talking state BEFORE killing coroutines
+        if (npc.AudioManager != null)
         {
-            Debug.Log($"Waiting for {npc.characterName} to finish talking... ({elapsed:F1}s)");
-            yield return new WaitForSeconds(0.5f);
-            elapsed += 0.5f;
+            npc.AudioManager.StopAllAudioPlayback();
+            npc.AudioManager.ClearResponseAudioQueue();
         }
-        
-        if (elapsed >= maxWaitTime)
-        {
-            Debug.LogWarning($"Timeout waiting for {npc.characterName} to finish talking. Proceeding with termination.");
-        }
-        else
-        {
-            Debug.Log($"{npc.characterName} finished talking after {elapsed:F1}s");
-        }
-        
-        // STEP 2: Unsubscribe from audio events to prevent further processing
+
+        // STEP 1: Unsubscribe
         if (npc.AudioManager != null)
         {
             npc.AudioManager.OnAudioTranscriptAvailable -= HandleAITranscript;
             Debug.Log($"Unsubscribed from audio events for {npc.characterName}");
         }
         
-        // STEP 3: Wait a brief moment for any pending GRPC operations to complete
-        yield return new WaitForSeconds(1f);
-        
-        // STEP 4: Deactivate the character (this should close the GRPC session)
+        // STEP 2: Shut down the Convai session (closes GRPC)
         npc.isCharacterActive = false;
-        Debug.Log($"Set {npc.characterName} isCharacterActive to false");
         
-        // STEP 5: Wait for session cleanup
-        yield return new WaitForSeconds(0.5f);
+        // STEP 3: Force stop all internal NPC coroutines (lipsync, audio playback, etc.)
+        npc.StopAllCoroutines();
         
-        // STEP 6: Finally disable the GameObject
+        // STEP 4: Deactivate the GameObject immediately
         npc.gameObject.SetActive(false);
-        Debug.Log($"Deactivated GameObject for {npc.characterName}");
         
-        Debug.Log($"Safe termination completed for {npc.characterName}");
-            
-        }
-
+        // STEP 5: Very brief pause for thread cleanup instead of long waits
+        yield return new WaitForSeconds(0.1f);
+        
+        Debug.Log($"✅ Safe termination completed for {npc.characterName}");
     }
 
     /// <summary>
@@ -835,38 +830,42 @@ public class ConvaiCustomerServiceIntegration : MonoBehaviour
     /// </summary>
     private IEnumerator EnsureCleanNPCState()
     {
-        Debug.Log("Ensuring clean NPC state before starting new interaction");
-        
-        // Stop any existing waiting processes
+        // Reset interaction variables immediately for the new interaction pool
         isWaitingForNPCResponse = false;
-        
-        // Clear any captured transcript from previous NPC
-        if (!string.IsNullOrEmpty(capturedComplaint))
-        {
-            Debug.Log($"Clearing previous captured complaint: '{capturedComplaint}'");
-            capturedComplaint = "";
-        }
-        
-        // Reset complaint exchange counter
+        capturedComplaint = "";
         complaintExchangeCount = 0;
-        
-        // Clean up any active NPCs
-        foreach (var npc in customerNPCs)
+
+        // Surgical cleanup: Only target the NPC that was previously active (at currentCustomerIndex - 1)
+        if (currentCustomerIndex > 0)
         {
-            if (npc != null && npc.isCharacterActive)
+            ConvaiNPC previousNPC = customerNPCs[currentCustomerIndex - 1];
+            
+            if (previousNPC != null && previousNPC != currentCustomerNPC)
             {
-                Debug.Log($"Found active NPC {npc.characterName}, terminating...");
-                yield return StartCoroutine(SafelyTerminateNPC(npc));
+                // FORCE RESET: Even if it's already deactivated, tell its audio manager
+                // to signal the Group Controller that it is definitely NOT talking.
+                if (previousNPC.AudioManager != null)
+                {
+                    previousNPC.AudioManager.StopAllAudioPlayback();
+                }
+
+                if (previousNPC.isCharacterActive || previousNPC.gameObject.activeSelf)
+                {
+                    Debug.Log($"🧹 [Cleanup] Surgically stopping previous NPC: {previousNPC.characterName}");
+                    yield return StartCoroutine(SafelyTerminateNPC(previousNPC));
+                }
             }
         }
-        
-        // Unsubscribe from all audio events to ensure clean slate
+        else
+        {
+            Debug.Log("🧹 [Cleanup] First interaction of session - skipping surgical cleanup.");
+        }
+
+        // Still unsubscribe from all events as a safety bridge
         UnsubscribeFromNPCAudio();
         
-        // Wait a moment for any pending operations to complete
-        yield return new WaitForSeconds(0.5f);
-        
-        Debug.Log("NPC state cleanup completed - transcript cleared, events unsubscribed");
+        // Very brief pause for internal Convai cleanup
+        yield return new WaitForSeconds(0.1f);
     }
 
     /// <summary>

@@ -51,6 +51,6 @@
         "temp/": true,
         "Temp/": true
     },
-    "dotnet.defaultSolution": "CustomerServiceSimulator.sln",
+    "dotnet.defaultSolution": "Customer-Service-Simulation.sln",
     "git.ignoreLimitWarning": true
 }

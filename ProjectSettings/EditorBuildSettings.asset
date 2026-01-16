@@ -4,5 +4,8 @@
 EditorBuildSettings:
   m_ObjectHideFlags: 0
   serializedVersion: 2
-  m_Scenes: []
+  m_Scenes:
+  - enabled: 1
+    path: Assets/Scenes/CoffeeShopInteriorDAY.unity
+    guid: 79b77b99f469ac04cb13088d83ea956d
   m_configObjects: {}
