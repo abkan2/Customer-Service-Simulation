@@ -86,62 +86,175 @@ public class ConvaiResponseGenerator : MonoBehaviour
     
     private List<IssueType> DetectIssueTypes(string lowerComplaint)
     {
-        var issues = new List<IssueType>();
-        
-        // More sophisticated pattern matching
-        var issuePatterns = new Dictionary<IssueType, string[]>
+        // Normalize a bit more than ToLower() alone
+        lowerComplaint = (lowerComplaint ?? "")
+            .ToLowerInvariant()
+            .Replace("’", "'")
+            .Replace("“", "\"")
+            .Replace("”", "\"");
+
+        // Split into rough sentences so "thanks" at the end doesn't override earlier complaints
+        var parts = Regex.Split(lowerComplaint, @"[.!?;\n\r]+")
+            .Select(s => s.Trim())
+            .Where(s => !string.IsNullOrEmpty(s))
+            .ToList();
+
+        // Weighted patterns. Higher weight = stronger signal.
+        // Use \b word boundaries where possible to avoid partial matches.
+        var patterns = new Dictionary<IssueType, (int weight, string[] pats)>
         {
-            { IssueType.OrderDelay, new[] { "wait", "waiting", "long", "time", "slow", "delayed", "taking forever", "still waiting", "how long" } },
-            { IssueType.WrongOrder, new[] { "wrong", "mistake", "not what i ordered", "incorrect", "not mine", "different", "mix up" } },
-            { IssueType.Temperature, new[] { "cold", "hot", "warm", "temperature", "lukewarm", "burning", "too hot", "too cold" } },
-            { IssueType.MilkType, new[] { "milk", "dairy", "soy", "almond", "oat", "lactose", "non-dairy", "milk alternative" } },
-            { IssueType.StaffAttitude, new[] { "rude", "attitude", "unprofessional", "dismissive", "ignored", "staff", "service", "employee" } },
-            { IssueType.Pricing, new[] { "price", "cost", "expensive", "overpriced", "charge", "money", "bill", "receipt" } },
-            { IssueType.Cleanliness, new[] { "dirty", "clean", "mess", "spill", "gross", "unsanitary", "filthy", "sticky" } },
-            { IssueType.Size, new[] { "size", "small", "large", "medium", "wrong size", "bigger", "smaller" } },
-            { IssueType.Missing, new[] { "missing", "forgot", "forgotten", "not included", "left out", "didn't get" } },
-            { IssueType.WiFi, new[] { "wifi", "wi-fi", "internet", "connection", "network", "password" } },
-            { IssueType.Noise, new[] { "noise", "loud", "music", "volume", "quiet", "sound" } },
-            { IssueType.Seating, new[] { "seat", "table", "chair", "sitting", "spot", "place to sit" } },
-            { IssueType.Loyalty, new[] { "reward", "points", "loyalty", "card", "account", "member" } },
-            { IssueType.Payment, new[] { "pay", "payment", "card", "charge", "transaction", "billing", "refund" } },
-            { IssueType.ConversationEnd, new[] { 
-                "that's all", "thats all", "that's it", "thats it", "that'll be all", "thatll be all",
-                "nothing else", "i'm good", "im good", "i'm done", "im done", "that's everything", "thats everything",
-                "no more", "all good", "we're good", "were good", "that covers it", "finished",
-                "for now", "that's all for now", "thats all for now", "enough for now", "done for now",
-                "thank you", "thanks", "appreciate it", "satisfied", "all set", "good to go",
-                "resolved", "fixed", "sorted", "handled", "taken care of"
-            } }
-        };
-        
-        foreach (var kvp in issuePatterns)
-        {
-            foreach (var pattern in kvp.Value)
-            {
-                if (lowerComplaint.Contains(pattern))
+            { IssueType.OrderDelay, (3, new[]
                 {
-                    if (!issues.Contains(kvp.Key))
+                    @"\bwait(?:ing)?\b", @"\blong\b", @"\bslow\b", @"\bdelay(?:ed)?\b",
+                    @"\btaking forever\b", @"\bstill waiting\b", @"\bhow long\b", @"\bin the queue\b"
+                })
+            },
+            { IssueType.WrongOrder, (4, new[]
+                {
+                    @"\bwrong\b", @"\bincorrect\b", @"\bnot what i ordered\b", @"\bnot mine\b",
+                    @"\bmix[- ]?up\b", @"\bmade (it|this) wrong\b"
+                })
+            },
+            { IssueType.Temperature, (4, new[]
+                {
+                    @"\bcold\b", @"\blukewarm\b", @"\btoo cold\b",
+                    @"\btoo hot\b", @"\bburning\b", @"\btemperature\b", @"\bwarm\b"
+                })
+            },
+            { IssueType.MilkType, (4, new[]
+                {
+                    @"\bmilk\b", @"\bdairy\b", @"\blactose\b", @"\ballergy\b",
+                    @"\bsoy\b", @"\balmond\b", @"\boat\b", @"\bnon[- ]?dairy\b"
+                })
+            },
+            { IssueType.StaffAttitude, (4, new[]
+                {
+                    @"\brude\b", @"\bunprofessional\b", @"\bdismissive\b", @"\bignored\b",
+                    @"\bstaff\b", @"\bemployee\b", @"\bservice\b", @"\battitude\b"
+                })
+            },
+            { IssueType.Pricing, (3, new[]
+                {
+                    @"\bexpensive\b", @"\boverpriced\b", @"\bprice\b", @"\bcost\b",
+                    @"\btoo much\b", @"\bcharged too (much|many)\b"
+                })
+            },
+            { IssueType.Cleanliness, (3, new[]
+                {
+                    @"\bdirty\b", @"\bgross\b", @"\bunsanitary\b", @"\bfilthy\b", @"\bsticky\b",
+                    @"\bspill\b", @"\bmess\b", @"\bbathroom\b"
+                })
+            },
+            { IssueType.Size, (3, new[]
+                {
+                    @"\bwrong size\b", @"\bsize\b", @"\bsmall\b", @"\bmedium\b", @"\blarge\b",
+                    @"\bbigger\b", @"\bsmaller\b"
+                })
+            },
+            { IssueType.Missing, (3, new[]
+                {
+                    @"\bmissing\b", @"\bforgot\b", @"\bleft out\b", @"\bnot included\b", @"\bdidn't get\b"
+                })
+            },
+            { IssueType.WiFi, (3, new[]
+                {
+                    @"\bwifi\b", @"\bwi-?fi\b", @"\binternet\b", @"\bnetwork\b", @"\bpassword\b",
+                    @"\bcan't connect\b", @"\bwon't connect\b", @"\bdisconnect(?:ed)?\b"
+                })
+            },
+            { IssueType.Noise, (2, new[]
+                {
+                    @"\bnoise\b", @"\bloud\b", @"\btoo loud\b", @"\bmusic\b", @"\bvolume\b", @"\bquiet\b"
+                })
+            },
+            { IssueType.Seating, (2, new[]
+                {
+                    @"\bseat(?:ing)?\b", @"\btable\b", @"\bchair\b", @"\bplace to sit\b", @"\bno seats\b"
+                })
+            },
+            { IssueType.Loyalty, (2, new[]
+                {
+                    @"\breward(?:s)?\b", @"\bpoints\b", @"\bloyalty\b", @"\bmember\b", @"\baccount\b"
+                })
+            },
+            { IssueType.Payment, (4, new[]
+                {
+                    @"\brefund\b", @"\bcharged\b", @"\bdouble[- ]?charged\b", @"\btransaction\b", @"\bbilling\b",
+                    @"\bpayment\b", @"\bcard\b", @"\bdeclined\b"
+                })
+            },
+            // ConversationEnd is special: score it, but only accept it if it's dominant AND later in the message.
+            { IssueType.ConversationEnd, (2, new[]
+                {
+                    @"\bthat's all\b", @"\bthats all\b", @"\bthat's it\b", @"\bthats it\b",
+                    @"\bnothing else\b", @"\bi'?m done\b", @"\bim done\b", @"\ball set\b",
+                    @"\bthat covers it\b", @"\bwe'?re good\b", @"\bwere good\b",
+                    @"\bthanks\b", @"\bthank you\b", @"\bappreciate it\b"
+                })
+            },
+        };
+
+        // Score issues across parts
+        var scores = new Dictionary<IssueType, int>();
+        foreach (var issue in patterns.Keys) scores[issue] = 0;
+
+        for (int i = 0; i < parts.Count; i++)
+        {
+            var part = parts[i];
+            foreach (var kvp in patterns)
+            {
+                var issue = kvp.Key;
+                var (weight, pats) = kvp.Value;
+
+                foreach (var pat in pats)
+                {
+                    if (Regex.IsMatch(part, pat, RegexOptions.IgnoreCase))
                     {
-                        issues.Add(kvp.Key);
+                        // Give more weight to matches in earlier parts for real complaints,
+                        // but give more weight to ConversationEnd matches in later parts.
+                        int positionalBoost = 0;
+                        if (issue == IssueType.ConversationEnd)
+                            positionalBoost = (i >= parts.Count - 1) ? 2 : 0;
+                        else
+                            positionalBoost = (i == 0) ? 1 : 0;
+
+                        scores[issue] += weight + positionalBoost;
                     }
                 }
             }
         }
-        
-        // If multiple issues detected, add Multiple flag
-        if (issues.Count > 1)
+
+        // Remove zeros
+        var ranked = scores
+            .Where(k => k.Value > 0)
+            .OrderByDescending(k => k.Value)
+            .Select(k => k.Key)
+            .ToList();
+
+        if (ranked.Count == 0)
+            return new List<IssueType> { IssueType.Unknown };
+
+        // If we have at least 2 real issues, add Multiple (but don't let it dominate)
+        var nonMeta = ranked.Where(t => t != IssueType.Multiple && t != IssueType.Unknown && t != IssueType.ConversationEnd).ToList();
+        if (nonMeta.Count >= 2)
+            ranked.Add(IssueType.Multiple);
+
+        // Gate ConversationEnd: only keep it if it's clearly the main intent and there isn't a strong complaint signal.
+        // (Fixes: transcripts that end with "thanks" but are still complaining.)
+        if (ranked.Contains(IssueType.ConversationEnd))
         {
-            issues.Add(IssueType.Multiple);
+            int endScore = scores.TryGetValue(IssueType.ConversationEnd, out var es) ? es : 0;
+            int bestComplaintScore = scores
+                .Where(k => k.Key != IssueType.ConversationEnd)
+                .Select(k => k.Value)
+                .DefaultIfEmpty(0)
+                .Max();
+
+            if (bestComplaintScore >= endScore)
+                ranked.Remove(IssueType.ConversationEnd);
         }
-        
-        // If no specific issues detected, mark as unknown
-        if (issues.Count == 0)
-        {
-            issues.Add(IssueType.Unknown);
-        }
-        
-        return issues;
+
+        return ranked;
     }
     
     private EmotionLevel AnalyzeEmotionLevel(string lowerComplaint)
@@ -226,16 +339,6 @@ public class ConvaiResponseGenerator : MonoBehaviour
             Debug.Log($"[ResponseGen] Emotion: {analysis.emotionLevel}, Urgency: {analysis.urgencyLevel}");
         }
 
-        // Try enhanced response first
-        string enhancedResponse = GenerateContextualGoodResponse(analysis, npcName);
-        if (!string.IsNullOrEmpty(enhancedResponse))
-        {
-            if (enableDetailedLogging)
-            {
-                Debug.Log($"[ResponseGen] Generated enhanced response: '{enhancedResponse}'");
-            }
-            return enhancedResponse;
-        }
 
         // Fallback to original logic for compatibility
         return GenerateOriginalGoodResponse(complaint);
@@ -249,7 +352,19 @@ public class ConvaiResponseGenerator : MonoBehaviour
         // Handle multiple issues in one complaint
         if (analysis.detectedIssues.Contains(IssueType.Multiple))
         {
-            return $"I can see there are a few things going on here{addressSuffix}. Let me address each of these concerns for you.";
+            // Prefer to answer the top-ranked issue unless there are several strong signals.
+            // (The list is already ranked by DetectIssueTypes.)
+            var primary = analysis.detectedIssues.FirstOrDefault(t =>
+                t != IssueType.Multiple && t != IssueType.Unknown && t != IssueType.ConversationEnd);
+
+            if (primary != IssueType.Unknown && primary != IssueType.Multiple && primary != IssueType.ConversationEnd)
+            {
+               return "Let me address the main issues you're facing right away";
+            }
+            else
+            {
+                return $"I can see there are a few things going on here{addressSuffix}. Let me address each of these concerns for you.";
+            }
         }
         
         // Handle high emotion/urgency complaints first

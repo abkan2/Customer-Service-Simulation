@@ -44,11 +44,27 @@ public class RushSession : MonoBehaviour
 
     private int served = 0;
     private bool customerInProgress = false; // Prevent multiple customer starts
+    private bool sessionStarted = false;
+
+    private bool reportCardShown = false;
+
+    private CustomerServiceMetrics Metrics => customerServiceMetrics;
 
     public RushTimer rushTimer; // Reference to the RushTimer
 
     void Start()
     {
+        // Ensure single source of truth references are wired even if not set in inspector
+        if (customerServiceMetrics == null)
+        {
+            customerServiceMetrics = GetComponent<CustomerServiceMetrics>() ?? FindObjectOfType<CustomerServiceMetrics>(true);
+        }
+
+        if (reportCardUI == null)
+        {
+            reportCardUI = FindObjectOfType<ReportCardUI>(true);
+        }
+
         // If using ConvaiNPC, let ConvaiCustomerServiceIntegration handle everything
         if (useConvaiNPC && convaiIntegration != null)
         {
@@ -58,6 +74,12 @@ public class RushSession : MonoBehaviour
             // Setup the ConvaiCustomerServiceIntegration
             convaiIntegration.rushSession = this;
             Debug.Log("ConvaiCustomerServiceIntegration configured");
+
+            // Unify metrics source: RushSession.customerServiceMetrics is canonical
+            if (customerServiceMetrics != null)
+            {
+                convaiIntegration.customerServiceMetrics = customerServiceMetrics;
+            }
             
             // Setup the response generator if available
             if (convaiResponseGenerator != null)
@@ -107,42 +129,30 @@ public class RushSession : MonoBehaviour
 
     void Update()
     {
-        if (rushTimer.isRunning)
+        // Only trigger the very first customer, then let the integration handle the loop
+        if (rushTimer.isRunning && !sessionStarted)
         {
-            ShowNextCustomer();
+            sessionStarted = true;
+            ShowFirstCustomer();
         }
     }
 
-    private void ShowNextCustomer()
+    private void ShowFirstCustomer()
     {
-        if (served >= totalCustomers)
-        {
-            Debug.Log($"Rush complete: Served {served}/{totalCustomers}.");
-            return;
-        }
-
-        // Prevent multiple simultaneous customer interactions
-        if (customerInProgress)
-        {
-            return; // Customer interaction already in progress
-        }
-
-        // Check if we should use ConvaiNPC integration
         if (useConvaiNPC && convaiIntegration != null)
         {
-            // Set flag to prevent multiple calls
             customerInProgress = true;
-            
-            // Let ConvaiCustomerServiceIntegration handle everything
-            Debug.Log($"Starting ConvaiNPC system for customer {served + 1}");
-            convaiIntegration.TriggerCustomerComplaint(served);
+            Debug.Log("Starting ConvaiNPC Rush Session. Handing control to ConvaiCustomerServiceIntegration.");
+            convaiIntegration.TriggerCustomerComplaint(0); // Start the first interaction
+        }
+        else if (!useConvaiNPC)
+        {
+            // Logic for non-Convai mode if needed
         }
     }
 
-
     /// <summary>
-    /// Called when a customer interaction is complete (either from ConvaiNPC or hardcoded)
-    /// This should ONLY be called when ALL customers in ConvaiCustomerServiceIntegration are done
+    /// Called when a customer interaction is complete
     /// </summary>
     public void OnCustomerComplete()
     {
@@ -150,27 +160,30 @@ public class RushSession : MonoBehaviour
         {
             // For ConvaiNPC mode, this means ALL customers are done
             Debug.Log("ConvaiNPC system reports all customers complete");
-            served = totalCustomers; // Set to max to end the session
+            served = totalCustomers;
+            UpdateServedDisplay();
         }
         else
         {
-            // For hardcoded mode, increment normally
             served++;
-            UpdateServedDisplay(); // Update the UI display
+            UpdateServedDisplay();
         }
 
-        // Brief delay before checking if we're done
-        Invoke(nameof(CheckForNextCustomer), 2f);
+        // Check if the session is finished
+        CheckForNextCustomer();
     }
 
     private void CheckForNextCustomer()
     {
         if (served < totalCustomers)
         {
-            // Continue with next customer if timer is still running
-            if (rushTimer.isRunning)
+            // If NOT using Convai, we would trigger the next hardcoded prompt here.
+            // But if using Convai, the integration script is already handling the loop.
+            if (!useConvaiNPC && rushTimer.isRunning)
             {
-                ShowNextCustomer();
+                customerInProgress = false;
+                // You can add logic here for your legacy hardcoded prompts if needed
+                Debug.Log("Moving to next hardcoded customer...");
             }
         }
         else
@@ -185,15 +198,29 @@ public class RushSession : MonoBehaviour
     /// </summary>
     private void ShowReportCard()
     {
+        if (reportCardShown)
+        {
+            return;
+        }
+
         if (customerServiceMetrics != null && reportCardUI != null)
         {
             Debug.Log("Generating and displaying report card...");
+
+            // If something forgot to end the last interaction, end it now.
+            // This avoids missing the last customer in the report.
+            if (customerServiceMetrics.isTrackingInteraction)
+            {
+                customerServiceMetrics.EndCustomerInteraction();
+            }
             
             // Generate the metrics report
             MetricsReport report = customerServiceMetrics.GenerateReportCard();
             
             // Display the report card
             reportCardUI.DisplayReportCard(report);
+
+            reportCardShown = true;
         }
         else
         {

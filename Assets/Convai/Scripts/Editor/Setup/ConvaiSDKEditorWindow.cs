@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using Assets.Convai.Scripts.Editor.Setup.LongTermMemory;
 using Convai.Scripts.Editor.CustomPackage;
 using Convai.Scripts.Editor.Setup.AccountsSection;
-using Convai.Scripts.Editor.Setup.CharacterImporter;
 using Convai.Scripts.Editor.Setup.Documentation;
 using Convai.Scripts.Editor.Setup.LoggerSettings;
 using Convai.Scripts.Editor.Setup.Updates;
@@ -100,9 +99,9 @@ namespace Convai.Scripts.Editor.Setup {
 
             _ = new APIKeySetupUI( _root );
             _ = new AccountInformationUI( _root );
-#if READY_PLAYER_ME
-            _ = new CharacterImporterUI( _root, FindObjectOfType<ConvaiChatUIHandler>() );
-#endif
+// #if READY_PLAYER_ME
+//             _ = new CharacterImporterUI( _root, FindObjectOfType<ConvaiChatUIHandler>() );
+// #endif
             _ = new LoggerSettingsUI( _root );
             _ = new DocumentationUI( _root );
             _ = new UpdatesSectionUI( _root );

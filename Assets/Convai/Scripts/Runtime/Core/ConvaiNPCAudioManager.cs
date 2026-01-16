@@ -48,6 +48,8 @@ namespace Convai.Scripts.Runtime.Core
         public void StopAllAudioPlayback()
         {
             if (_audioSource != null && _audioSource.isPlaying) _audioSource.Stop();
+            // ADD THIS LINE: Notify the system that this NPC is no longer talking
+            SetCharacterTalking(false); 
         }
 
         public void ClearResponseAudioQueue()
@@ -101,14 +103,22 @@ namespace Convai.Scripts.Runtime.Core
 
                         if (_npcController != null)
                         {
-                            while (_npcController.IsOtherNPCTalking())
+                            // HYPER-SAFE: Use 'this != null' to check if the component hasn't been destroyed
+                            // and check the controller's underlying reference before calling it.
+                            while (this != null && _npcController != null && _npcController.IsOtherNPCTalking())
                             {
                                 yield return new WaitForSeconds(0.1f);
+                
+                                
+                                // Safe break if we're being cleaned up
+                                if (this == null || !gameObject.activeInHierarchy) yield break;
                             }
                         }
                         
+                        // Final sanity check: Are we still alive and is the audio source still there?
+                        if (this == null || _audioSource == null || !gameObject.activeInHierarchy) yield break;
+
                         _audioSource.Play();
-                        //ConvaiLogger.DebugLog($"Playing: {currentResponseAudio.AudioTranscript}", ConvaiLogger.LogCategory.LipSync);
                         SetCharacterTalking(true);
                         OnAudioTranscriptAvailable?.Invoke(currentResponseAudio.AudioTranscript.Trim());
                         yield return new WaitForSeconds(currentResponseAudio.AudioClip.length);
