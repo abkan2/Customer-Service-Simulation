@@ -54,7 +54,8 @@ public class ReportCardUI : MonoBehaviour
         // Set score
         if (scoreText != null)
         {
-            scoreText.text = $"Score: {report.overallScore:F1}/100";
+            int scorePercent = Mathf.RoundToInt(Mathf.Clamp(report.overallScore, 0f, 100f));
+            scoreText.text = $"{scorePercent}%";
         }
         
         yield return new WaitForSeconds(0.3f);
@@ -165,7 +166,8 @@ public class ReportCardUI : MonoBehaviour
     private void LogReportCard(MetricsReport report)
     {
         Debug.Log("=== CUSTOMER SERVICE REPORT CARD ===");
-        Debug.Log($"Overall Grade: {report.overallGrade} ({report.overallScore:F1}/100)");
+        int scorePercent = Mathf.RoundToInt(Mathf.Clamp(report.overallScore, 0f, 100f));
+        Debug.Log($"Overall Grade: {report.overallGrade} ({scorePercent}%)");
         Debug.Log($"Customers Served: {report.totalCustomersServed}");
         Debug.Log($"Average Interaction Time: {report.averageInteractionTime:F1}s");
         Debug.Log($"Average Satisfaction Change: {report.averageSatisfactionChange:+F1}");
